@@ -516,3 +516,248 @@ const maybeGetUrl = getUrl(indexURLs) // Храним глобальное значение в каррирован
  
 // maybeGetUrl требует только один аргумент, так что можем объединить в цепочку:
 maybe(user).chain(maybeGetUrl).bla.bla
+
+Пример 2: обработка функций, бросающих исключения и выход сразу после ошибки
+Освещенные темы: Монада «Either»
+
+Монада Maybe подходит нам, чтобы обработать ошибки, связанные с null и undefined. Но что делать с функциями, которым требуется выбрасывать исключения? И как определить, какая из функций в цепочке вызвала ошибку, когда в серии несколько функций, бросающих исключения?
+
+Например, если func2 из цепочки func1.func2.func3... выбросила исключение, мы должны пропустить вызов func3 и последующие функции и корректно обработать ошибку.
+
+Монада Either
+
+Монада Either превосходно подойдет для подобной ситуации.
+
+Пример использования: В примере ниже мы рассчитываем «tax» и «discont» для «items» и в конечном счете вызываем showTotalPrice.
+
+Заметьте, что функции «tax» и «discount» выбросят исключение, если в качестве цены передано не числовое значение. Функция «discount», помимо этого, вернет ошибку в случае, если цена меньше 10.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+// Императивный:
+// Возвращает ошибку или цену, включающую налог
+const tax = (tax, price) => {
+  if (!_.isNumber(price)) return new Error("Price must be numeric");
+ 
+  return price + (tax * price);
+};
+ 
+// Возвращает ошибку или цену, включающую скидку
+const discount = (dis, price) => {
+  if (!_.isNumber(price)) return (new Error("Price must be numeric"));
+ 
+  if (price < 10) return new Error("discount cant be applied for items priced below 10");
+ 
+  return price - (price * dis);
+};
+ 
+const isError = (e) => e && e.name == 'Error';
+ 
+const getItemPrice = (item) => item.price;
+ 
+// Выводит общую цену, включая налог и скидку. Требует обработки нескольких ошибок
+const showTotalPrice = (item, taxPerc, disount) => {
+  let price = getItemPrice(item);
+  let result = tax(taxPerc, price);
+  if (isError(result)) {
+    return console.log('Error: ' + result.message);
+  }
+  result = discount(discount, result);
+  if (isError(result)) {
+    return console.log('Error: ' + result.message);
+  }
+  // выводим результат
+  console.log('Total Price: ' + result);
+}
+ 
+let tShirt = { name: 't-shirt', price: 11 };
+let pant = { name: 't-shirt', price: '10 dollars' };
+let chips = { name: 't-shirt', price: 5 }; // ошибка
+ 
+showTotalPrice(tShirt) // Total Is: 9.075
+showTotalPrice(pant)   // Error: Price must be numeric
+showTotalPrice(chips)  // Error: discount cant be applied for items priced below 10
+Давайте посмотрим, как можно реализовать этот пример в функциональном стиле, используя монаду Either.
+
+Either-монада предоставляет два конструктора: «Either.Left» и «Either.Right«. Думайте о них, как о подклассах Either. И «Left«, и «Right» тоже являются монадами. Идея в том, чтобы хранить ошибки или исключения в Left и полезные значения в Right.
+
+Экземпляры Either.Left или Either.Right создаются в зависимости от значения функции.
+
+Так давайте же посмотрим, как изменить наш императивный пример на функциональный.
+
+Шаг 1: Оберните возвращаемые значения в Left и Right. «Оборачивание» означает создание экземпляра класса с помощью оператора new.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+var Either = require('ramda-fantasy').Either;
+var Left = Either.Left;
+var Right = Either.Right;
+ 
+const tax = R.curry((tax, price) => {
+  if (!_.isNumber(price)) return Left(new Error("Price must be numeric")); // <--Оборачиваем Error в Either.Left
+ 
+  return  Right(price + (tax * price)); // <-- Оборачиваем результат в Either.Right
+});
+ 
+const discount = R.curry((dis, price) => {
+  if (!_.isNumber(price)) return Left(new Error("Price must be numeric")); // <--Оборачиваем Error в Either.Left
+ 
+  if (price < 10) return Left(new Error("discount cant be applied for items priced below 10")); // <--Оборачиваем Error в Either.Left
+ 
+  return Right(price - (price * dis)); // <--Оборачиваем result в Either.Right
+});
+Шаг 2: Оберните исходное значение в Right, так как оно валидно.
+
+1
+const getItemPrice = (item) => Right(item.price);
+Шаг 3: Создайте две функции: одну для обработки ошибок, а другую для отображения результата. Оберните их в Either.either (из библиотеки ramda-fantasy.js).
+
+Either.either принимает 3 параметра: обработчик успешного завершения, обработчик ошибок и монаду Either. Сейчас мы можем передать только обработчики, а третий параметр, Either, передать позже.
+
+Как только Either.either получит все три параметра, она передаст третий параметр в обработчик успешного завершения или обработчик ошибок, в зависимости от типа монады: Left или Right.
+
+1
+2
+3
+const displayTotal = (total) => { console.log(‘Total Price: ‘ + total) };
+const logError = (error) => { console.log(‘Error: ‘ + error.message); };
+const eitherLogOrShow = Either.either(logError, displayTotal);
+Шаг 4: Используйте метод chain, чтобы создать цепочку из нескольких функций, выбрасывающих исключения. Передайте результат их выполнения в Either.either (eitherLogOrShow).
+
+1
+const showTotalPrice = (item) => eitherLogOrShow(getItemPrice(item).chain(apply25PercDisc).chain(addCaliTax));
+Все вместе выглядит следующим образом:
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+const tax = R.curry((tax, price) => {
+  if (!_.isNumber(price)) return Left(new Error("Price must be numeric"));
+ 
+  return  Right(price + (tax * price));
+});
+ 
+const discount = R.curry((dis, price) => {
+  if (!_.isNumber(price)) return Left(new Error("Price must be numeric"));
+ 
+  if (price < 10) return Left(new Error("discount cant be applied for items priced below 10"));
+ 
+  return Right(price - (price * dis));
+});
+ 
+const addCaliTax = (tax(0.1)); // 10%
+ 
+const apply25PercDisc = (discount(0.25)); // скидка25%
+ 
+const getItemPrice = (item) => Right(item.price);
+ 
+ 
+const displayTotal = (total) => { console.log('Total Price: ' + total) };
+ 
+const logError = (error) => { console.log('Error: ' + error.message); };
+ 
+const eitherLogOrShow = Either.either(logError, displayTotal);
+ 
+const showTotalPrice = (item) => eitherLogOrShow(getItemPrice(item).chain(apply25PercDisc).chain(addCaliTax));
+ 
+ 
+let tShirt = { name: 't-shirt', price: 11 };
+let pant = { name: 't-shirt', price: '10 dollars' }; // ошибка
+let chips = { name: 't-shirt', price: 5 }; // ошибка
+ 
+ 
+showTotalPrice(tShirt) // Total Is: 9.075
+showTotalPrice(pant)   // Error: Price must be numeric
+showTotalPrice(chips)  // Error: discount cant be applied for items priced below 10
+В следующей части мы рассмотрим аппликативные функторы, curryN и Validation Applicative.
