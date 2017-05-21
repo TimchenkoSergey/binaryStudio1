@@ -45,3 +45,474 @@ JS-класс — монада, если он реализует функции, требуемые функтором, аппликативным
 Так что в дополнение к ним вы должны использовать одну из библиотек, следующих спецификациям FL.
 
 Теперь, когда мы знаем основы, давайте посмотрим на несколько практических примеров и изучим на них некоторые из возможностей и техник функционального программирования.
+
+Пример 1: справляемся с проверкой на NULL
+Тема покрывает: функторы, монады, Maybe-монады и каррирование.
+
+Сценарий использования: Мы хотим показать различные стартовые страницы в зависимости от языка, выбранного пользователем в настройках. В данном примере мы реализовываем функцию getUrlForUser, которая возвращает правильный URL из списка indexURLs для испанского языка, выбранного пользователем joeUser.
+
+Проблема: язык может быть не выбран, то есть равняться null. Также сам пользователь может быть не залогинен и равняться null. Выбранный язык может быть не доступен в нашем списке indexURLs. Так что мы должны позаботиться о нескольких случаях, при которых значение null или undefined может вызвать ошибку.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+const getUrlForUser = (user) => {
+}
+// Объект пользователя
+let joeUser = {
+    name: 'joe',
+    email: 'joe@example.com',
+    prefs: {
+        languages: {
+            primary: 'sp',
+            secondary: 'en'
+        }
+    }
+};
+// Список стартовых страниц в зависимости от выбранного языка
+let indexURLs = {
+    'en': 'http://mysite.com/en',  // Английский
+    'sp': 'http://mysite.com/sp', // Испанский
+    'jp': 'http://mysite.com/jp'   // Японский
+}
+// Перезаписываем window.location
+const showIndexPage = (url) => { window.location = url };
+Решение (Императивное против Функционального):
+
+Не беспокойтесь, если функциональное решение пока вам не понятно, я объясню его шаг за шагом немного позже.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+// Императивный стиль:
+// Слишком много if-else и проверок на null
+const getUrlForUser = (user) => {
+  if (user == null) { // не залогинен
+    return indexURLs['en']; // возвращаем страницу по умолчанию
+  }
+  if (user.prefs.languages.primary && user.prefs.languages.primary != 'undefined') {
+    if (indexURLs[user.prefs.languages.primary]) { // Если существует перевод
+      return indexURLs[user.prefs.languages.primary];
+    } else {
+      return indexURLs['en'];
+    }
+  }
+}
+ 
+// вызов
+showIndexPage(getUrlForUser(joeUser));
+ 
+ 
+// Функциональный стиль:
+// Поначалу чуть сложнее понять, но он намного более надежен)
+const R = require('ramda');
+const prop = R.prop;
+const path = R.path;
+const curry = R.curry;
+const Maybe = require('ramda-fantasy').Maybe;
+ 
+const getURLForUser = (user) => {
+    return Maybe(user) // Оборачиваем пользователя в объект Maybe 
+        .map(path(['prefs', 'languages', 'primary'])) // Используем Ramda чтобы получить язык
+        .chain(maybeGetUrl); // передаем язык в maybeGetUrl; получаем url или Монаду null
+}
+ 
+const maybeGetUrl = R.curry(function(allUrls, language) { // Каррируем для того, чтобы превратить в функцию с одним параметром
+    return Maybe(allUrls[language]); // Возвращаем Монаду(url или null)
+})(indexURLs); // Передаем indexURLs вместо того, чтобы обращаться к глобальной переменной
+ 
+ 
+function boot(user, defaultURL) {
+   showIndexPage(getURLForUser(user).getOrElse(defaultURL));
+}
+ 
+boot(joeUser, 'http://site.com/en'); // 'http://site.com/sp'
+Давайте для начала попробуем понять некоторые из концептов ФП, которые были использованы в этом решении.
+
+Функторы
+
+Любой класс или тип данных, который хранит значение и реализует метод map, называется функтором.
+
+Например, Array — это функтор, потому что массив хранит значения и реализует метод map, позволяющий нам применять функцию к значениям, которые он хранит.
+
+1
+2
+3
+const add1 = (a) => a+1;
+let myArray = new Array(1, 2, 3, 4); // хранит значения
+myArray.map(add1) // -> [2,3,4,5] // применяет функции
+Давайте напишем свой собственный функтор «MyFunctor». Это просто JS-класс (функция-конструктор). Метод map применяет функцию к хранимым значениям и возвращает новый экземпляр MyFunctor.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+const add1 = (a) => a + 1;
+class MyFunctor {
+  constructor(value) {
+    this.val = value;
+  }
+  map(fn) {   // Применяет функцию к this.val + возвращает новый экземпляр Myfunctor
+   return new Myfunctor(fn(this.val));
+  }
+}
+// temp --- это экземпляр Functor, хранящий значение 1
+let temp = new MyFunctor(1); 
+temp.map(add1) // -> temp позволяет нам применить add1
+Функторы так же должны реализовывать и другие спецификации в дополнение к методу map, но я не буду рассказывать о них в этой статье.
+
+Монады
+
+Монады — это подтип функторов, так как у них есть метод map, но они также реализуют другие методы, например, ap, of, chain.
+
+Ниже представлена простая реализация монады.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+// Монада - простая реализация
+class Monad {
+    constructor(val) {
+        this.__value = val;
+    }
+    static of(val) { // Monad.of проще, чем new Monad(val)
+        return new Monad(val);
+    };
+    map(f) { // Применяет функцию, возвращает новый экземпляр Monad
+        return Monad.of(f(this.__value));
+    };
+    join() { // используется для получения значения монады
+        return this.__value;
+    };
+    chain(f) { // Хелпер, который применяет функцию и возвращает значение монады
+        return this.map(f).join();
+    };
+    ap(someOtherMonad) { // Используется, чтобы взаимодействовать с другими монадами
+        return someOtherMonad.map(this.__value);
+    }
+}
+Обычные монады используются нечасто, в отличие от более специфичных монад, таких как «монада Maybe» и «монада Either«.
+
+«Maybe»-монада
+
+Монада «Maybe» — это класс, который имплементирует спецификацию монады. Её особенность заключается в том, что с помощью нее можно решать проблемы с null и undefined.
+
+В частности, в случае, если данные равны null или undefined, функция map пропускает их.
+
+Код, представленный ниже, показывает имплементацию Maybe-монады в библиотеке ramda-fantasy. Она возвращает экземпляр одного из двух подклассов: Just или Nothing, в зависимости от значения.
+
+Классы Just и Nothing содержат одинаковые методы (map, orElse и т.д.). Отличие между ними в реализации этих самых методов.
+
+Обратите особое внимание на функции «map» и «orElse».
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+// Самые важные части реализации Maybe из библиотеки ramda-fantasy
+// Для того, чтобы посмотреть полный исходный код, посетите https://github.com/ramda/ramda-fantasy/blob/master/src/Maybe.js
+ 
+function Maybe(x) { // <-- Главный конструктор, возвращающий Maybe.Just или Nothing
+  return x == null ? _nothing : Maybe.Just(x);
+}
+ 
+function Just(x) {
+  this.value = x;
+}
+util.extend(Just, Maybe);
+ 
+Just.prototype.isJust = true;
+Just.prototype.isNothing = false;
+ 
+function Nothing() {}
+util.extend(Nothing, Maybe);
+ 
+Nothing.prototype.isNothing = true;
+Nothing.prototype.isJust = false;
+ 
+var _nothing = new Nothing();
+ 
+Maybe.Nothing = function() {
+  return _nothing;
+};
+ 
+Maybe.Just = function(x) {
+  return new Just(x);
+};
+ 
+Maybe.of = Maybe.Just;
+ 
+Maybe.prototype.of = Maybe.Just;
+ 
+ 
+// функтор
+Just.prototype.map = function(f) { // Применение map на Just запускает функцию и возвращает Just(результат)
+  return this.of(f(this.value));
+};
+ 
+Nothing.prototype.map = util.returnThis; // <-- Применение Map на Nothing не делает ничего
+ 
+Just.prototype.getOrElse = function() {
+  return this.value;
+};
+ 
+Nothing.prototype.getOrElse = function(a) {
+  return a;
+};
+ 
+module.exports = Maybe;
+Давайте поймем, как Maybe-монада осуществляет проверку на null.
+
+Если есть объект, который может равняться null или иметь нулевые свойства, создаем экземпляр монады из него.
+Используем библиотеки, вроде ramdajs, чтобы получить значение из монады и работать с ним.
+Возвращаем значение по умолчанию, если данные равняются null.
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+// Шаг 1. Вместо
+if (user == null) { // не залогинен
+    return indexURLs['en']; // возвращает значение по умолчанию
+  }
+ 
+// Используйте:
+ Maybe(user) // Возвращает Maybe({userObj}) или Maybe(null)
+ 
+ 
+ 
+// Шаг 2. Вместо
+ if (user.prefs.languages.primary && user.prefs.languages.primary != 'undefined') {
+    if (indexURLs[user.prefs.languages.primary]) { // если есть перевод
+      return indexURLs[user.prefs.languages.primary];
+      
+// Используйте:
+ <userMaybe>.map(path(['prefs', 'languages', 'primary']))
+      
+   
+      
+// Шаг 3. Вместо
+ return indexURLs['en']; // захардкоженные значения по умолчанию
+  
+// Используйте:
+<userMayBe>.getOrElse('http://site.com/en')
+Каррирование
+
+Освещенные темы: чистые функции и композиция.
+
+Если мы хотим создавать серии вызовов функций, как то func1.func2.func3 или (func1(func2(func3())), все эти функции должны принимать только один параметр. Например, если func2 принимает два параметра (func2(param1, param2)), мы не сможем включить её в серию.
+
+Но с практической точки зрения многие функции могут принимать несколько параметров. Так как же нам создавать из них цепочки? Ответ: С помощью каррирования.
+
+Каррирование превращает функцию, которая принимает несколько параметров в функцию, которая принимает только один параметр за один раз. Функция не запустится, пока все параметры не будут переданы.
+
+В дополнение, каррирование может быть также использовано в ситуациях, когда мы обращаемся к глобальным значениям.
+
+Давайте снова взглянем на наше решение:
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+// Глобальный список языков
+let indexURLs = {
+    'en': 'http://mysite.com/en',  // Английский
+    'sp': 'http://mysite.com/sp', // Испанский
+    'jp': 'http://mysite.com/jp'   // Японский
+}
+ 
+// Императивный стиль
+const getUrl = (language) => allUrls[language]; // Простой, но склонный к ошибкам и нечистый стиль(обращение к глобальной переменной)
+ 
+ 
+// Функциональный стиль
+ 
+// До каррирования:
+const getUrl = (allUrls, language) => {
+    return Maybe(allUrls[language]);
+}
+ 
+// После каррирования:
+const getUrl = R.curry(function(allUrls, language) {
+    return Maybe(allUrls[language]);
+});
+ 
+const maybeGetUrl = getUrl(indexURLs) // Храним глобальное значение в каррированной функции
+ 
+// maybeGetUrl требует только один аргумент, так что можем объединить в цепочку:
+maybe(user).chain(maybeGetUrl).bla.bla
